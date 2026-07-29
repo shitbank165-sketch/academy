@@ -1,0 +1,84 @@
+name: Evaluate Laravel Installation
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_url:
+        description: Student repository
+        required: true
+      student_branch:
+        description: Branch name
+        required: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.repo_url }}
+          ref: ${{ github.event.inputs.student_branch }}
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+
+      - name: Install Composer Dependencies
+        run: composer install --no-interaction
+
+      - name: Check Laravel Installation
+        run: |
+          score=0
+
+          if [ -f composer.json ]; then
+            echo "✅ composer.json found"
+            score=$((score+15))
+          fi
+
+          if [ -f artisan ]; then
+            echo "✅ artisan found"
+            score=$((score+15))
+          fi
+
+          if [ -f .env ]; then
+            echo "✅ .env found"
+            score=$((score+15))
+          fi
+
+          if [ -d app ]; then
+            echo "✅ app directory found"
+            score=$((score+15))
+          fi
+
+          if [ -d routes ]; then
+            echo "✅ routes directory found"
+            score=$((score+15))
+          fi
+
+          if [ -d vendor ]; then
+            echo "✅ vendor directory found"
+            score=$((score+10))
+          fi
+
+          if php artisan --version; then
+            echo "✅ Laravel works"
+            score=$((score+15))
+          fi
+
+          echo "Final Score: $score"
+
+          cat <<EOF > evaluation-results.json
+          {
+            "score": $score,
+            "passed": $( [ $score -ge 80 ] && echo true || echo false )
+          }
+          EOF
+
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results
+          path: evaluation-results.json
