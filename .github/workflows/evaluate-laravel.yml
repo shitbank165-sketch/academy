@@ -23,6 +23,7 @@ jobs:
     steps:
       - name: Parse student repository URL
         id: parse
+        shell: bash
         run: |
           repo="${{ github.event.inputs.student_repository }}"
           repo="${repo#https://github.com/}"
@@ -30,13 +31,13 @@ jobs:
           echo "repo=${repo}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout repository
+        shell: bash
         run: |
           git clone --branch "${{ github.event.inputs.student_branch }}" \
             "https://x-access-token:${{ secrets.GITHUB_ACTIONS_TOKEN }}@github.com/${{ steps.parse.outputs.repo }}.git" student-repo
-        shell: bash
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v4
+        uses: shivammathur/setup-php@2.37.2
         with:
           php-version: '8.4'
 
