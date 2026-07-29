@@ -3,11 +3,17 @@ name: Evaluate Laravel Installation
 on:
   workflow_dispatch:
     inputs:
-      repo_url:
-        description: Student repository
+      attempt_token:
+        required: true
+      submission_id:
+        required: true
+      exercise_slug:
+        required: true
+      test_suite:
         required: true
       student_branch:
-        description: Branch name
+        required: true
+      student_repository:
         required: true
 
 jobs:
@@ -15,70 +21,135 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Parse student repository URL
+        id: parse
+        run: |
+          repo="${{ github.event.inputs.student_repository }}"
+          repo="${repo#https://github.com/}"
+          repo="${repo%.git}"
+          echo "repo=${repo}" >> $GITHUB_OUTPUT
+
       - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.event.inputs.repo_url }}
-          ref: ${{ github.event.inputs.student_branch }}
+        run: |
+          git clone --branch "${{ github.event.inputs.student_branch }}" \
+            "https://x-access-token:${{ secrets.GITHUB_ACTIONS_TOKEN }}@github.com/${{ steps.parse.outputs.repo }}.git" student-repo
+          cd student-repo
+        shell: bash
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.3"
+          php-version: '8.3'
 
       - name: Install Composer Dependencies
+        working-directory: student-repo
         run: composer install --no-interaction
 
-      - name: Check Laravel Installation
+      - name: Evaluate Laravel Installation
+        working-directory: student-repo
         run: |
           score=0
+          checks=()
 
           if [ -f composer.json ]; then
-            echo "✅ composer.json found"
-            score=$((score+15))
+            score=$((score + 15))
+            checks+=( '{"name":"composer.json","passed":true,"points":15,"message":"composer.json found"}' )
+          else
+            checks+=( '{"name":"composer.json","passed":false,"points":0,"message":"composer.json missing"}' )
           fi
 
           if [ -f artisan ]; then
-            echo "✅ artisan found"
-            score=$((score+15))
+            score=$((score + 15))
+            checks+=( '{"name":"artisan","passed":true,"points":15,"message":"artisan found"}' )
+          else
+            checks+=( '{"name":"artisan","passed":false,"points":0,"message":"artisan missing"}' )
           fi
 
           if [ -f .env ]; then
-            echo "✅ .env found"
-            score=$((score+15))
+            score=$((score + 15))
+            checks+=( '{"name":".env","passed":true,"points":15,"message":".env found"}' )
+          else
+            checks+=( '{"name":".env","passed":false,"points":0,"message":".env missing"}' )
           fi
 
           if [ -d app ]; then
-            echo "✅ app directory found"
-            score=$((score+15))
+            score=$((score + 15))
+            checks+=( '{"name":"app","passed":true,"points":15,"message":"app directory found"}' )
+          else
+            checks+=( '{"name":"app","passed":false,"points":0,"message":"app directory missing"}' )
           fi
 
           if [ -d routes ]; then
-            echo "✅ routes directory found"
-            score=$((score+15))
+            score=$((score + 15))
+            checks+=( '{"name":"routes","passed":true,"points":15,"message":"routes directory found"}' )
+          else
+            checks+=( '{"name":"routes","passed":false,"points":0,"message":"routes directory missing"}' )
           fi
 
           if [ -d vendor ]; then
-            echo "✅ vendor directory found"
-            score=$((score+10))
+            score=$((score + 10))
+            checks+=( '{"name":"vendor","passed":true,"points":10,"message":"vendor directory found"}' )
+          else
+            checks+=( '{"name":"vendor","passed":false,"points":0,"message":"vendor directory missing"}' )
           fi
 
-          if php artisan --version; then
-            echo "✅ Laravel works"
-            score=$((score+15))
+          if php artisan --version > /dev/null 2>&1; then
+            score=$((score + 15))
+            checks+=( '{"name":"artisan-version","passed":true,"points":15,"message":"Laravel CLI works"}' )
+          else
+            checks+=( '{"name":"artisan-version","passed":false,"points":0,"message":"Laravel CLI failed"}' )
           fi
 
-          echo "Final Score: $score"
+          passed=false
+          if [ "$score" -ge 80 ]; then
+            passed=true
+          fi
 
-          cat <<EOF > evaluation-results.json
-          {
-            "score": $score,
-            "passed": $( [ $score -ge 80 ] && echo true || echo false )
-          }
-          EOF
+          jq -n \
+            --argjson score "$score" \
+            --argjson passed "$passed" \
+            --arg attempt_token "${{ github.event.inputs.attempt_token }}" \
+            --arg status "completed" \
+            --argjson earned_points "$score" \
+            --argjson total_points 100 \
+            '[${checks[@]}]' >/tmp/checks.json
+
+          jq -n \
+            --arg attempt_token "${{ github.event.inputs.attempt_token }}" \
+            --arg status "completed" \
+            --argjson score "$score" \
+            --argjson passed "$passed" \
+            --argjson earned_points "$score" \
+            --argjson total_points 100 \
+            --slurpfile checks /tmp/checks.json \
+            '{
+              attempt_token: $attempt_token,
+              status: $status,
+              score: $score,
+              passed: $passed,
+              feedback: {
+                earned_points: $earned_points,
+                total_points: $total_points,
+                checks: $checks[0]
+              }
+            }' > evaluation-results.json
+
+          cat evaluation-results.json
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
         with:
           name: evaluation-results
           path: evaluation-results.json
+
+      - name: Send callback to academy
+        env:
+          ACADEMY_URL: ${{ secrets.ACADEMY_URL }}
+          ACADEMY_SECRET: ${{ secrets.GITHUB_EXERCISE_CALLBACK_SECRET }}
+        run: |
+          body=$(cat evaluation-results.json)
+          signature=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$ACADEMY_SECRET" | sed 's/^.* //')
+          curl -s -X POST "$ACADEMY_URL/api/exercises/github-callback" \
+            -H "Content-Type: application/json" \
+            -H "X-Academy-Signature: sha256=$signature" \
+            -d "$body"
