@@ -121,14 +121,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: evaluation-results
-          path: evaluation-results.json
+          path: student-repo/evaluation-results.json
 
       - name: Send callback to academy
         env:
           ACADEMY_URL: ${{ secrets.ACADEMY_URL }}
           ACADEMY_SECRET: ${{ secrets.GITHUB_EXERCISE_CALLBACK_SECRET }}
+        shell: bash
         run: |
-          body=$(cat evaluation-results.json)
+          body=$(cat student-repo/evaluation-results.json)
           signature=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$ACADEMY_SECRET" | sed 's/^.* //')
           curl -s -X POST "$ACADEMY_URL/api/exercises/github-callback" \
             -H 'Content-Type: application/json' \
