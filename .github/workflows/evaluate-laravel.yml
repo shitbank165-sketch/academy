@@ -27,7 +27,7 @@ jobs:
           repo="${{ github.event.inputs.student_repository }}"
           repo="${repo#https://github.com/}"
           repo="${repo%.git}"
-          echo "repo=${repo}" >> $GITHUB_OUTPUT
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout repository
         run: |
@@ -36,7 +36,7 @@ jobs:
         shell: bash
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v4
+        uses: shivammathur/setup-php@v4.37.2
         with:
           php-version: '8.4'
 
@@ -49,7 +49,7 @@ jobs:
         shell: bash
         run: |
           score=0
-          checks='[]'
+          checks="[]"
 
           if [ -f composer.json ]; then
             score=$((score + 15))
@@ -106,9 +106,9 @@ jobs:
                 --argjson checks "$checks" \
                 '{
                   attempt_token: $token,
-                  status: ($status),
-                  score: ($score),
-                  passed: ($passed),
+                  status: $status,
+                  score: $score,
+                  passed: $passed,
                   feedback: {
                     earned_points: $score,
                     total_points: $total_points,
