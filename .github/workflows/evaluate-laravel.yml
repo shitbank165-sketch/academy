@@ -5,20 +5,30 @@ on:
     inputs:
       attempt_token:
         required: true
+        type: string
       submission_id:
         required: true
+        type: string
       exercise_slug:
         required: true
+        type: string
       test_suite:
         required: true
+        type: string
       student_branch:
         required: true
+        type: string
       student_repository:
         required: true
+        type: string
 
 jobs:
   evaluate:
     runs-on: ubuntu-latest
+    env:
+      ACADEMY_URL: ${{ secrets.ACADEMY_URL }}
+      ACADEMY_CALLBACK_SECRET: ${{ secrets.ACADEMY_CALLBACK_SECRET }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_ACTIONS_TOKEN }}
 
     steps:
       - name: Parse student repository URL
@@ -28,96 +38,106 @@ jobs:
           repo="${{ github.event.inputs.student_repository }}"
           repo="${repo#https://github.com/}"
           repo="${repo%.git}"
-          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "repository=${repo}" >> $GITHUB_OUTPUT
 
-      - name: Checkout repository
+      - name: Checkout student repository
         shell: bash
         run: |
           git clone --branch "${{ github.event.inputs.student_branch }}" \
-            "https://x-access-token:${{ secrets.GITHUB_ACTIONS_TOKEN }}@github.com/${{ steps.parse.outputs.repo }}.git" student-repo
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ steps.parse.outputs.repository }}.git" student-repo
+          ls -la student-repo
 
       - name: Setup PHP
         uses: shivammathur/setup-php@2.37.2
         with:
           php-version: '8.4'
 
-      - name: Install Composer Dependencies
+      - name: Install Composer dependencies
         working-directory: student-repo
-        run: composer install --no-interaction --no-progress --prefer-dist
+        run: composer install --no-interaction --no-progress --prefer-dist --optimize-autoloader
 
-      - name: Evaluate Laravel Installation
+      - name: Evaluate Laravel installation
         working-directory: student-repo
         shell: bash
         run: |
           score=0
-          checks="[]"
+          passed=true
+          checks='[]'
 
           if [ -f composer.json ]; then
             score=$((score + 15))
-            checks=$(jq '. + [{"name":"composer.json","passed":true,"points":15,"message":"composer.json found"}]' <<<"$checks")
+            checks=$(jq -n --arg m "composer.json found" '[{language:"php", points:15, passed:true, message:$m}]')
           else
-            checks=$(jq '. + [{"name":"composer.json","passed":false,"points":0,"message":"composer.json missing"}]' <<<"$checks")
+            passed=false
+            checks=$(jq -n --arg m "composer.json missing" '[{language:"php", points:0, passed:false, message:$m}]')
           fi
 
           if [ -f artisan ]; then
             score=$((score + 15))
-            checks=$(jq '. + [{"name":"artisan","passed":true,"points":15,"message":"artisan found"}]' <<<"$checks")
+            checks=$(jq -n --arg c "$checks" --arg m "artisan found" '[{language:"php", points:15, passed:true, message:$m}]')
           else
-            checks=$(jq '. + [{"name":"artisan","passed":false,"points":0,"message":"artisan missing"}]' <<<"$checks")
+            passed=false
+            checks=$(jq -n --arg c "$checks" --arg m "artisan missing" '[{language:"php", points:0, passed:false, message:$m}]')
           fi
 
           if [ -d app ]; then
             score=$((score + 15))
-            checks=$(jq '. + [{"name":"app","passed":true,"points":15,"message":"app directory found"}]' <<<"$checks")
+            checks=$(jq -n --arg m "app directory found" '[{language:"php", points:15, passed:true, message:$m}]')
           else
-            checks=$(jq '. + [{"name":"app","passed":false,"points":0,"message":"app directory missing"}]' <<<"$checks")
+            passed=false
+            checks=$(jq -n --arg m "app directory missing" '[{language:"php", points:0, passed:false, message:$m}]')
           fi
 
           if [ -d routes ]; then
             score=$((score + 15))
-            checks=$(jq '. + [{"name":"routes","passed":true,"points":15,"message":"routes directory found"}]' <<<"$checks")
+            checks=$(jq -n --arg m "routes directory found" '[{language:"php", points:15, passed:true, message:$m}]')
           else
-            checks=$(jq '. + [{"name":"routes","passed":false,"points":0,"message":"routes directory missing"}]' <<<"$checks")
+            passed=false
+            checks=$(jq -n --arg m "routes directory missing" '[{language:"php", points:0, passed:false, message:$m}]')
           fi
 
           if [ -d vendor ]; then
-            score=$((score + 10))
-            checks=$(jq '. + [{"name":"vendor","passed":true,"points":10,"message":"vendor directory found"}]' <<<"$checks")
+            score=$((score + 15))
+            checks=$(jq -n --arg m "vendor directory found" '[{language:"php", points:15, passed:true, message:$m}]')
           else
-            checks=$(jq '. + [{"name":"vendor","passed":false,"points":0,"message":"vendor directory missing"}]' <<<"$checks")
+            passed=false
+            checks=$(jq -n --arg m "vendor directory missing" '[{language:"php", points:0, passed:false, message:$m}]')
           fi
 
-          if php artisan --version > /dev/null 2>&1; then
-            score=$((score + 10))
-            checks=$(jq '. + [{"name":"artisan-version","passed":true,"points":10,"message":"artisan CLI works"}]' <<<"$checks")
+          if php --version >/dev/null 2>&1; then
+            score=$((score + 15))
+            checks=$(jq -n --arg m "PHP CLI works" '[{language:"php", points:15, passed:true, message:$m}]')
           else
-            checks=$(jq '. + [{"name":"artisan-version","passed":false,"points":0,"message":"artisan CLI failed"}]' <<<"$checks")
+            passed=false
+            checks=$(jq -n --arg m "PHP CLI failed" '[{language:"php", points:0, passed:false, message:$m}]')
           fi
 
-          passed=false
-          if [ "$score" -ge 80 ]; then
-            passed=true
+          if [ "$passed" = true ]; then
+            status="completed"
+          else
+            status="failed"
           fi
 
-          jq -n --arg token "${{ github.event.inputs.attempt_token }}" \
-                --arg status "$([ "$passed" = true ] && echo completed || echo failed)" \
-                --argjson score "$score" \
-                --argjson passed "$passed" \
-                --argjson total_points 100 \
-                --argjson checks "$checks" \
-                '{
-                  attempt_token: $token,
-                  status: $status,
-                  score: $score,
-                  passed: $passed,
-                  feedback: {
-                    earned_points: $score,
-                    total_points: $total_points,
-                    checks: $checks
-                  }
-                }' > ../evaluation-results.json
+          jq -n \
+            --arg token "${{ github.event.inputs.attempt_token }}" \
+            --arg status "$status" \
+            --argjson score "$score" \
+            --argjson passed "$passed" \
+            --argjson checks "$checks" \
+            --arg total_points "100" \
+            '{
+              attempt_token: $token,
+              status: $status,
+              score: $score,
+              passed: $passed,
+              feedback: {
+                earned_points: $score,
+                total_points: ($total_points | tonumber),
+                checks: $checks
+              }
+            }' > evaluation-results.json
 
-      - name: Upload Results
+      - name: Upload evaluation result
         uses: actions/upload-artifact@v4
         with:
           name: evaluation-results
@@ -126,12 +146,13 @@ jobs:
       - name: Send callback to academy
         env:
           ACADEMY_URL: ${{ secrets.ACADEMY_URL }}
-          ACADEMY_SECRET: ${{ secrets.ACADEMY_CALLBACK_SECRET }}
+          ACADEMY_CALLBACK_SECRET: ${{ secrets.ACADEMY_CALLBACK_SECRET }}
         shell: bash
         run: |
           body=$(cat evaluation-results.json)
-          signature=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$ACADEMY_SECRET" | sed 's/^.* //')
-          curl -s -X POST "$ACADEMY_URL/api/exercises/github-callback" \
-            -H 'Content-Type: application/json' \
-            -H "X-Academy-Signature: sha256=$signature" \
-            -d "$body"
+          signature="sha256=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$ACADEMY_CALLBACK_SECRET" | sed 's/^.*= //')"
+
+          curl -Ssf -X POST "$ACADEMY_URL/api/exercises/github-callback" \
+            -H "Content-Type: application/json" \
+            -H "X-Academy-Signature: $signature" \
+            --data-binary "$body"
