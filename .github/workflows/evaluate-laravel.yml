@@ -126,7 +126,7 @@ jobs:
       - name: Send callback to academy
         env:
           ACADEMY_URL: ${{ secrets.ACADEMY_URL }}
-          ACADEMY_SECRET: ${{ secrets.GITHUB_EXERCISE_CALLBACK_SECRET }}
+          ACADEMY_SECRET: ${{ secrets.ACADEMY_CALLBACK_SECRET }}
         shell: bash
         run: |
           body=$(cat evaluation-results.json)
