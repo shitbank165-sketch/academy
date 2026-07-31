@@ -1,175 +1,207 @@
-steps:
-  - name: Checkout runner repository
-    uses: actions/checkout@v4
+name: Evaluate Laravel Installation
 
-  - name: Parse student repository URL
-    id: parse
-    shell: bash
-    run: |
-      repo="${{ github.event.inputs.student_repository }}"
-      repo="${repo#https://github.com/}"
-      repo="${repo%.git}"
-      echo "repository=${repo}" >> $GITHUB_OUTPUT
+on:
+  workflow_dispatch:
+    inputs:
+      attempt_token:
+        required: true
+        type: string
+      submission_id:
+        required: true
+        type: string
+      exercise_slug:
+        required: true
+        type: string
+      test_suite:
+        required: true
+        type: string
+      student_branch:
+        required: true
+        type: string
+      student_repository:
+        required: true
+        type: string
 
-  - name: Checkout student repository
-    shell: bash
-    run: |
-      set -euo pipefail
-      mkdir -p student-repo
-      git clone --branch "${{ github.event.inputs.student_branch }}" \
-        "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ steps.parse.outputs.repository }}.git" student-repo
-      ls -la student-repo
-
-  - name: Setup PHP
-    uses: shivammathur/setup-php@2.37.2
-    with:
-      php-version: '8.4'
-
-  - name: Install Composer dependencies
-    working-directory: student-repo
-    run: composer install --no-interaction --no-progress --prefer-dist --optimize-autoloader || true
-
-  - name: Evaluate Laravel installation
-    working-directory: student-repo
-    shell: bash
-    run: |
-      set -euo pipefail
-      score=0
-      passed=true
-      checks='[]'
-
-      add_check() {
-        points=$1
-        pass=$2
-        message=$3
-        checks=$(jq -n --argjson prev "$checks" --arg m "$message" --arg l "php" --argjson pts "$points" --argjson p "$([ "$pass" = true ] && echo true || echo false)" '$prev + [{language:$l, points:$pts, passed:$p, message:$m}]')
-      }
-
-      if [ -f [composer.json](http://_vscodecontentref_/0) ]; then
-        score=$((score + 15)); add_check 15 true "composer.json found"
-      else
-        passed=false; add_check 0 false "composer.json missing"
-      fi
-
-      if [ -f artisan ]; then
-        score=$((score + 15)); add_check 15 true "artisan found"
-      else
-        passed=false; add_check 0 false "artisan missing"
-      fi
-
-      if [ -d app ]; then
-        score=$((score + 15)); add_check 15 true "app directory found"
-      else
-        passed=false; add_check 0 false "app directory missing"
-      fi
-
-      if [ -d routes ]; then
-        score=$((score + 15)); add_check 15 true "routes directory found"
-      else
-        passed=false; add_check 0 false "routes directory missing"
-      fi
-
-      if [ -d vendor ]; then
-        score=$((score + 15)); add_check 15 true "vendor directory found"
-      else
-        passed=false; add_check 0 false "vendor directory missing"
-      fi
-
-      if php --version >/dev/null 2>&1; then
-        score=$((score + 15)); add_check 15 true "PHP CLI works"
-      else
-        passed=false; add_check 0 false "PHP CLI failed"
-      fi
-
-      status=$([ "$passed" = true ] && echo completed || echo failed)
-
-      jq -n \
-        --arg token "${{ github.event.inputs.attempt_token }}" \
-        --arg status "$status" \
-        --argjson score "$score" \
-        --argjson passed "$([ "$passed" = true ] && echo true || echo false)" \
-        --arg total_points "100" \
-        --argjson checks "$checks" \
-        '{
-          attempt_token: $token,
-          status: $status,
-          score: $score,
-          passed: $passed,
-          feedback: {
-            earned_points: $score,
-            total_points: ($total_points | tonumber),
-            checks: $checks
-          }
-        }' > evaluation-results.json
-
-  - name: Upload evaluation result
-    uses: actions/upload-artifact@v4
-    with:
-      name: evaluation-results-${{ github.event.inputs.attempt_token }}
-      path: evaluation-results.json
-
-  - name: Send callback to academy
-    id: send_callback
-    working-directory: student-repo
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
     env:
       ACADEMY_URL: ${{ secrets.ACADEMY_URL }}
       ACADEMY_CALLBACK_SECRET: ${{ secrets.ACADEMY_CALLBACK_SECRET }}
-    shell: bash
-    run: |
-      set -euo pipefail
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      if [ -z "${ACADEMY_URL:-}" ]; then
-        echo "ERROR: ACADEMY_URL secret is not set."
-        exit 1
-      fi
+    steps:
+      - name: Checkout runner repository
+        uses: actions/checkout@v4
 
-      if [ -z "${ACADEMY_CALLBACK_SECRET:-}" ]; then
-        echo "ERROR: ACADEMY_CALLBACK_SECRET secret is not set."
-        exit 1
-      fi
+      - name: Parse student repository URL
+        id: parse
+        shell: bash
+        run: |
+          repo="${{ github.event.inputs.student_repository }}"
+          repo="${repo#https://github.com/}"
+          repo="${repo%.git}"
+          echo "repository=${repo}" >> $GITHUB_OUTPUT
 
-      FILE=$(find . -maxdepth 4 -type f -name 'evaluation-results.json' -print -quit || true)
-      if [ -z "$FILE" ]; then
-        echo "ERROR: evaluation-results.json not found in workspace. Listing files:"
-        ls -la
-        find . -maxdepth 4 -print
-        exit 1
-      fi
+      - name: Checkout student repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p student-repo
+          git clone --branch "${{ github.event.inputs.student_branch }}" \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ steps.parse.outputs.repository }}.git" student-repo
+          ls -la student-repo
 
-      echo "===== evaluation-results.json ====="
-      cat "$FILE" || true
-      echo "==================================="
+      - name: Setup PHP
+        uses: shivammathur/setup-php@2.37.2
+        with:
+          php-version: '8.4'
 
-      BODY=$(cat "$FILE")
-      SIG_HEX=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$ACADEMY_CALLBACK_SECRET" -binary | xxd -p -c 256)
-      SIGNATURE="sha256=$SIG_HEX"
+      - name: Install Composer dependencies
+        working-directory: student-repo
+        run: composer install --no-interaction --no-progress --prefer-dist --optimize-autoloader || true
 
-      TMP_RESP=$(mktemp)
-      HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$TMP_RESP" \
-        -H "Content-Type: application/json" \
-        -H "X-Academy-Signature: $SIGNATURE" \
-        --data-binary @"$FILE" \
-        "${ACADEMY_URL%/}/api/exercises/github-callback" || true)
-      CURL_RC=$?
+      - name: Evaluate Laravel installation
+        working-directory: student-repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          score=0
+          passed=true
+          checks='[]'
 
-      echo "curl exit code: $CURL_RC"
-      echo "---- callback response (truncated) ----"
-      head -n 200 "$TMP_RESP" || true
-      echo "---- end response ----"
-      echo "HTTP status: ${HTTP_CODE:-N/A}"
+          add_check() {
+            points=$1
+            pass=$2
+            message=$3
+            checks=$(jq -n --argjson prev "$checks" --arg m "$message" --arg l "php" --argjson pts "$points" --argjson p "$([ "$pass" = true ] && echo true || echo false)" '$prev + [{language:$l, points:$pts, passed:$p, message:$m}]')
+          }
 
-      if [ "$CURL_RC" -ne 0 ]; then
-        echo "Callback curl failed (exit $CURL_RC)."
-        exit $CURL_RC
-      fi
+          if [ -f composer.json ]; then
+            score=$((score + 15)); add_check 15 true "composer.json found"
+          else
+            passed=false; add_check 0 false "composer.json missing"
+          fi
 
-      if [ -z "$HTTP_CODE" ] || { [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "204" ]; }; then
-        echo "Callback returned non-success HTTP status: ${HTTP_CODE:-N/A}"
-        exit 1
-      fi
+          if [ -f artisan ]; then
+            score=$((score + 15)); add_check 15 true "artisan found"
+          else
+            passed=false; add_check 0 false "artisan missing"
+          fi
 
-  - name: Fail workflow if evaluation failed
-    if: ${{ steps.send_callback.outcome != 'success' }}
-    run: |
-      echo "Evaluation callback failed; failing workflow for visibility."
-      exit 1
+          if [ -d app ]; then
+            score=$((score + 15)); add_check 15 true "app directory found"
+          else
+            passed=false; add_check 0 false "app directory missing"
+          fi
+
+          if [ -d routes ]; then
+            score=$((score + 15)); add_check 15 true "routes directory found"
+          else
+            passed=false; add_check 0 false "routes directory missing"
+          fi
+
+          if [ -d vendor ]; then
+            score=$((score + 15)); add_check 15 true "vendor directory found"
+          else
+            passed=false; add_check 0 false "vendor directory missing"
+          fi
+
+          if php --version >/dev/null 2>&1; then
+            score=$((score + 15)); add_check 15 true "PHP CLI works"
+          else
+            passed=false; add_check 0 false "PHP CLI failed"
+          fi
+
+          status=$([ "$passed" = true ] && echo completed || echo failed)
+
+          jq -n \
+            --arg token "${{ github.event.inputs.attempt_token }}" \
+            --arg status "$status" \
+            --argjson score "$score" \
+            --argjson passed "$([ "$passed" = true ] && echo true || echo false)" \
+            --arg total_points "100" \
+            --argjson checks "$checks" \
+            '{
+              attempt_token: $token,
+              status: $status,
+              score: $score,
+              passed: $passed,
+              feedback: {
+                earned_points: $score,
+                total_points: ($total_points | tonumber),
+                checks: $checks
+              }
+            }' > evaluation-results.json
+
+      - name: Upload evaluation result
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results-${{ github.event.inputs.attempt_token }}
+          path: evaluation-results.json
+
+      - name: Send callback to academy
+        id: send_callback
+        working-directory: student-repo
+        env:
+          ACADEMY_URL: ${{ secrets.ACADEMY_URL }}
+          ACADEMY_CALLBACK_SECRET: ${{ secrets.ACADEMY_CALLBACK_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${ACADEMY_URL:-}" ]; then
+            echo "ERROR: ACADEMY_URL secret is not set."
+            exit 1
+          fi
+
+          if [ -z "${ACADEMY_CALLBACK_SECRET:-}" ]; then
+            echo "ERROR: ACADEMY_CALLBACK_SECRET secret is not set."
+            exit 1
+          fi
+
+          FILE=$(find . -maxdepth 4 -type f -name 'evaluation-results.json' -print -quit || true)
+          if [ -z "$FILE" ]; then
+            echo "ERROR: evaluation-results.json not found in workspace. Listing files:"
+            ls -la
+            find . -maxdepth 4 -print
+            exit 1
+          fi
+
+          echo "===== evaluation-results.json ====="
+          cat "$FILE" || true
+          echo "==================================="
+
+          BODY=$(cat "$FILE")
+          SIG_HEX=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$ACADEMY_CALLBACK_SECRET" -binary | xxd -p -c 256)
+          SIGNATURE="sha256=$SIG_HEX"
+
+          TMP_RESP=$(mktemp)
+          HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$TMP_RESP" \
+            -H "Content-Type: application/json" \
+            -H "X-Academy-Signature: $SIGNATURE" \
+            --data-binary @"$FILE" \
+            "${ACADEMY_URL%/}/api/exercises/github-callback" || true)
+          CURL_RC=$?
+
+          echo "curl exit code: $CURL_RC"
+          echo "---- callback response (truncated) ----"
+          head -n 200 "$TMP_RESP" || true
+          echo "---- end response ----"
+          echo "HTTP status: ${HTTP_CODE:-N/A}"
+
+          if [ "$CURL_RC" -ne 0 ]; then
+            echo "Callback curl failed (exit $CURL_RC)."
+            exit $CURL_RC
+          fi
+
+          if [ -z "$HTTP_CODE" ] || { [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "204" ]; }; then
+            echo "Callback returned non-success HTTP status: ${HTTP_CODE:-N/A}"
+            exit 1
+          fi
+
+      - name: Fail workflow if evaluation failed
+        if: ${{ steps.send_callback.outcome != 'success' }}
+        run: |
+          echo "Evaluation callback failed; failing workflow for visibility."
+          exit 1
