@@ -81,11 +81,7 @@ steps:
         passed=false; add_check 0 false "PHP CLI failed"
       fi
 
-      if [ "$passed" = true ]; then
-        status="completed"
-      else
-        status="failed"
-      fi
+      status=$([ "$passed" = true ] && echo completed || echo failed)
 
       jq -n \
         --arg token "${{ github.event.inputs.attempt_token }}" \
